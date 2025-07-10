@@ -20,9 +20,7 @@ import numpy as np # numpyのarangeと比較するため、ここでは残して
 
 class SeasonalPositionalEncoding(nn.Module):
     """
-    特定の周期(periods)に基づいたsin/cos波を使い、
-    季節性などの周期的な位置情報を生成するクラス。
-    
+    特定の周期(periods)に基づいたsin/cos波
     Args:
         d_model (int): 特徴量ベクトルの次元数
         max_len (int): 想定されるシーケンスの最大長
@@ -62,6 +60,30 @@ class SeasonalPositionalEncoding(nn.Module):
         # x.size(1) は入力のseq_length
         return self.pe[:, :x.size(1), :] # shape: (seq_length, d_model)
 
+class InputEmbedding(nn.Module):
+    def __init__(self, features: int, d_model: int):
+        super().__init__()
+        self.d_model=d_model
+        self.embedding_layer = nn.Linear(in_features=features, out_features=d_model)
+    
+    def forward(self, x:torch.Tensor):
+        return self.embedding_layer(x)
+
+class TokenEmbedding(nn.Module):
+    def __init__(self, features, d_model):
+        super().__init__()
+        padding = 1 if torch.__version__ >= '1.5.0' else 2
+        self.tokenConv = nn.Conv1d(in_channels=features, out_channels=d_model,
+                                   kernel_size=3, padding=padding, padding_mode='circular', bias=False)
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(
+                    m.weight, mode='fan_in', nonlinearity='leaky_relu')
+
+    def forward(self, x):
+        x = self.tokenConv(x.permute(0, 2, 1)).transpose(1, 2)
+        return x
+
 class PositionalEmbedding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super(PositionalEmbedding, self).__init__()
@@ -81,23 +103,6 @@ class PositionalEmbedding(nn.Module):
 
     def forward(self, x):
         return self.pe[:, :x.size(1)]
-
-
-class TokenEmbedding(nn.Module):
-    def __init__(self, c_in, d_model):
-        super(TokenEmbedding, self).__init__()
-        padding = 1 if torch.__version__ >= '1.5.0' else 2
-        self.tokenConv = nn.Conv1d(in_channels=c_in, out_channels=d_model,
-                                   kernel_size=3, padding=padding, padding_mode='circular', bias=False)
-        for m in self.modules():
-            if isinstance(m, nn.Conv1d):
-                nn.init.kaiming_normal_(
-                    m.weight, mode='fan_in', nonlinearity='leaky_relu')
-
-    def forward(self, x):
-        x = self.tokenConv(x.permute(0, 2, 1)).transpose(1, 2)
-        return x
-
 
 class FixedEmbedding(nn.Module):
     def __init__(self, c_in, d_model):

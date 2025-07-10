@@ -12,14 +12,15 @@ from einops import rearrange
 
 from Utilities.Utilities import read_csv, dataloader
 from config import config
-from DataProcessing.PosEmbedding import SeasonalPositionalEncoding
+from DataProcessing.PosEmbedding import SeasonalPositionalEncoding, TokenEmbedding, PositionalEmbedding
+from model.TransformerTranspose import TransformerTranspose
 
 path =config.path
 
 x_train, y_train, x_valid, y_valid, x_test, y_test = read_csv(path, train_size=config.train_size, test_size=config.test_size, seq_length=config.seq_length, target_col=config.target_col)
 
 #LSTMはpos_encodingいらない
-pos_encoding = SeasonalPositionalEncoding(d_model=config.d_model, max_len=config.seq_length, periods=config.periods)
+pos_encoding = PositionalEmbedding(d_model=config.d_model, max_len=config.seq_length)
 pe_train = pos_encoding(x_train)
 pe_valid = pos_encoding(x_valid)
 pe_test = pos_encoding(x_test)
@@ -27,6 +28,10 @@ pe_test = pos_encoding(x_test)
 train_loader = dataloader(x_train, y_train, batch_size=config.batch_size) #x[batch_size:64, seq_length:432, features:25]
 valid_loader = dataloader(x_valid, y_valid, batch_size=config.batch_size) #y[64, 1]
 test_loader = dataloader(x_test, y_test, batch_size=config.batch_size)
+
+model = TransformerTranspose(
+    dim=config.d_model, heads=config.head_num, dim_head=config.dim_head, 
+    mlp_dim=config.mlp_dim, seq_length=config.seq_length, dropout=config.dropout)
 
 for loader in [train_loader, valid_loader, test_loader]:
     first_batch_x, first_batch_y = next(iter(loader))
@@ -45,7 +50,7 @@ for loader in [train_loader, valid_loader, test_loader]:
 
 '''
 次のステップ 
-features 25 -> d_model次元に変換（CNNを使用）
+features 25 -> d_model次元に変換
 
 ***
 transformerのみ

@@ -1,7 +1,7 @@
 class Config():
     def __init__(
             self, seq_length, d_model, periods, train_size, test_size, target_col, path,
-            batch_size
+            batch_size, head_num, dim_head, dropout
             ):
         self.seq_length: int = seq_length
         self.d_model: int = d_model
@@ -11,7 +11,9 @@ class Config():
         self.target_col : str = target_col
         self.path :str = path
         self.batch_size : int = batch_size
-
+        self.head_num :int = head_num
+        self.dim_head : int = d_model/dim_head
+        self.dropout : int = dropout
 
 config = Config(
     seq_length=432,
@@ -24,3 +26,11 @@ config = Config(
     target_col = 'Appliances',
     path = 'dataset/energydata_complete.csv'
 )
+
+
+''''
+確認しなきゃいけないこと
+config head_num
+transformer内各ステップでの次元
+最後の分類方法：予測の仕方・正規化の戻し方
+'''
