@@ -30,8 +30,9 @@ valid_loader = dataloader(x_valid, y_valid, batch_size=config.batch_size) #y[64,
 test_loader = dataloader(x_test, y_test, batch_size=config.batch_size)
 
 model = TransformerTranspose(
-    dim=config.d_model, heads=config.head_num, dim_head=config.dim_head, 
-    mlp_dim=config.mlp_dim, seq_length=config.seq_length, dropout=config.dropout)
+    dim=config.d_model, heads=config.num_heads, dim_head=config.dim_head, 
+    mlp_dim=config.mlp_dim, seq_length=config.seq_length, dropout=config.dropout
+    )
 
 for loader in [train_loader, valid_loader, test_loader]:
     first_batch_x, first_batch_y = next(iter(loader))
@@ -47,15 +48,3 @@ for loader in [train_loader, valid_loader, test_loader]:
     print(f"  - x_batchの形状: {first_batch_x.shape}")
     print(f"  - y_batchの形状: {first_batch_y.shape}")
 
-
-'''
-次のステップ 
-features 25 -> d_model次元に変換
-
-***
-transformerのみ
-pe + x
-transformer
-***
-
-'''

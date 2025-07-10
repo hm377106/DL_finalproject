@@ -21,7 +21,7 @@ input [time_series: features]→[batch_size: seq_length: feature_dim]→
 '''
 
 class TransformerTranspose(nn.Module):
-    def __init__(self, dim, heads, dim_head, mlp_dim, seq_length, dropout):
+    def __init__(self, dim, heads, dim_head, hidden_dim, seq_length, dropout):
         """
         TransformerのEncoder Blockの実装．
 
@@ -43,9 +43,9 @@ class TransformerTranspose(nn.Module):
 
         self.attn_ln = nn.LayerNorm(dim)  # AttentionあとのLayerNorm
         self.attn_feature = Attention(dim, heads, dim_head, dropout, is_feature_attention=False)
-        self.attn_time_series = Attention(dim, heads,dim_head, dropout, is_feature_attention=False)
+        self.attn_time_series = Attention(dim, heads, dim_head, dropout, is_feature_attention=False)
         self.ffn_ln = nn.LayerNorm(dim)  # FFN前のLayerNorm
-        self.ffn = FFN(dim, mlp_dim, dropout)
+        self.ffn = FFN(dim, hidden_dim, dropout)
 
     def forward(self, x, return_attn=False):
         """
@@ -54,7 +54,7 @@ class TransformerTranspose(nn.Module):
         N: 系列長
         dim: 埋め込み次元
         """
-        y, attn_feature = self.attn_feature(self.embedding(x))
+        y, attn_feature = self.attn_feature(self.embedding(x))  
         x = y+x
         z, attn_time = self.attn_time_series(self.attn_ln(x))
         if return_attn:  # attention mapを返す（attention mapの可視化に利用）
