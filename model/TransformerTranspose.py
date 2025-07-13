@@ -10,8 +10,9 @@ from torchvision import datasets, transforms
 from einops.layers.torch import Rearrange
 from einops import rearrange
 
-from ..layer.attention import FeatureAttention as Attention
-from ..layer.ffn import FFN
+from layer.attention import FeatureAttention as Attention
+from layer.ffn import FFN
+from model.cnn import CNN
 
 '''
 input [time_series: features]→[batch_size: seq_length: feature_dim]→
@@ -21,7 +22,21 @@ input [time_series: features]→[batch_size: seq_length: feature_dim]→
 '''
 
 class TransformerTranspose(nn.Module):
-    def __init__(self, dim, heads, dim_head, hidden_dim, seq_length, dropout):
+    def __init__(
+                self, dim, num_heads, hidden_dim, seq_length, features, 
+                dropout_attention, dropout_ffn,
+                in_channels,         # 入力チャネル数
+                out_channels_list,   # 各畳み込み層の出力チャネル数
+                kernel_sizes,        # 各畳み込み層のカーネルサイズ
+                strides,             # 各畳み込み層のストライド
+                paddings,            # 各畳み込み層のパディング
+                pooling_methods,     # 各層のプーリング方法
+                d_cmodel,            # 入力テンソルの高さ
+                d_tmodel,            # 入力テンソルの幅
+                dropout_cnn,
+                global_pooling="adaptive_avg",  # グローバルプーリング
+                output_dim=1
+                ):
         """
         TransformerのEncoder Blockの実装．
 
@@ -33,34 +48,62 @@ class TransformerTranspose(nn.Module):
             Multi-Head Attentionのヘッドの数．
         dim_head : int
             Multi-Head Attentionの各ヘッドの次元数．
-        mlp_dim : int
+        hidden_dim : int
             Feed-Forward Networkの隠れ層の次元数．
         dropout : float
             Droptou層の確率p．
         """
         super().__init__()
-        self.embedding = nn.Linear(seq_length, dim)
+        self.legth2embedding = nn.Linear(seq_length, dim)
+        self.features2embedding = nn.Linear(features, dim)
 
-        self.attn_ln = nn.LayerNorm(dim)  # AttentionあとのLayerNorm
-        self.attn_feature = Attention(dim, heads, dim_head, dropout, is_feature_attention=False)
-        self.attn_time_series = Attention(dim, heads, dim_head, dropout, is_feature_attention=False)
-        self.ffn_ln = nn.LayerNorm(dim)  # FFN前のLayerNorm
-        self.ffn = FFN(dim, hidden_dim, dropout)
+        self.attn_ln = nn.LayerNorm(dim)  # AttentionまえのLayerNorm
+        self.attn_feature = Attention(input_dim=dim, num_heads=num_heads, dropout=dropout_attention)
+        self.attn_time_series = Attention(input_dim=dim, num_heads=num_heads, dropout=dropout_attention)
+        self.ffn = FFN(dim, hidden_dim, dropout_ffn)
+        self.ffn_ln = nn.LayerNorm(dim)  # FFNまえのLayerNorm
+
+        self.cnn = CNN(
+                in_channels,         # 入力チャネル数
+                 out_channels_list,   # 各畳み込み層の出力チャネル数
+                 kernel_sizes,        # 各畳み込み層のカーネルサイズ
+                 strides,             # 各畳み込み層のストライド
+                 paddings,            # 各畳み込み層のパディング
+                 pooling_methods,     # 各層のプーリング方法
+                 d_cmodel,            # 入力テンソルの高さ
+                 d_tmodel,            # 入力テンソルの幅
+                 global_pooling,  # グローバルプーリング
+                 dropout_cnn,         # ドロップアウト率
+                 output_dim=output_dim
+                 )
 
     def forward(self, x, return_attn=False):
         """
-        x: (B, N, dim)
+        x: (B, N, D)
         B: バッチサイズ
-        N: 系列長
+        D: 特徴量数
         dim: 埋め込み次元
         """
-        y, attn_feature = self.attn_feature(self.embedding(x))  
+        x = self.legth2embedding(x.transpose(1, 2)) #[B:N:D] -> [B:D:N] -> [B:D:dim]
+        y, attn_feature = self.attn_feature(self.attn_ln(x))   #[B:D:dim] -> [B:D:dim]
         x = y+x
+
+        x = self.features2embedding(x.transpose(1, 2)) #[B:D:dim] -> [B:dim:D]->[B:dim:dim]
         z, attn_time = self.attn_time_series(self.attn_ln(x))
+
         if return_attn:  # attention mapを返す（attention mapの可視化に利用）
             return attn_feature, attn_time
         
         x = z+x
         out = self.ffn(self.ffn_ln(x)) + x
+        out = out.unsqueeze(1) 
 
-        return out
+        output = self.cnn(out)
+        if return_attn:
+            return output , attn_feature, attn_time, out
+        else:
+            return output
+
+
+
+

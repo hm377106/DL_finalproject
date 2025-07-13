@@ -30,10 +30,10 @@ def read_csv(path, train_size, test_size, seq_length, target_col):
     valid_df = df[train_length:test_length]
     test_df = df[test_length:]
 
-    scaler = StandardScaler()
-    train_df = scaler.fit_transform(train_df)
-    valid_df = scaler.fit_transform(valid_df)
-    test_df = scaler.fit_transform(test_df)
+    # scaler = StandardScaler()
+    # train_df = scaler.fit_transform(train_df)
+    # valid_df = scaler.fit_transform(valid_df)
+    # test_df = scaler.fit_transform(test_df)
 
     train_df = pd.DataFrame(train_df, columns=df.columns)
     valid_df = pd.DataFrame(valid_df, columns=df.columns)
