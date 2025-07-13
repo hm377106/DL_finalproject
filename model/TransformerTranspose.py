@@ -10,7 +10,7 @@ from torchvision import datasets, transforms
 from einops.layers.torch import Rearrange
 from einops import rearrange
 
-from layer.attention import FeatureAttention as Attention
+from layer.attention import FeatureAttention
 from layer.ffn import FFN
 from model.cnn import CNN
 
@@ -23,7 +23,7 @@ input [time_series: features]→[batch_size: seq_length: feature_dim]→
 
 class TransformerTranspose(nn.Module):
     def __init__(
-                self, dim, num_heads, hidden_dim, seq_length, features, 
+                self, d_model_feature, d_model_time, num_heads, hidden_dim, seq_length, features,
                 dropout_attention, dropout_ffn,
                 in_channels,         # 入力チャネル数
                 out_channels_list,   # 各畳み込み層の出力チャネル数
@@ -54,14 +54,17 @@ class TransformerTranspose(nn.Module):
             Droptou層の確率p．
         """
         super().__init__()
-        self.legth2embedding = nn.Linear(seq_length, dim)
-        self.features2embedding = nn.Linear(features, dim)
+        self.legth2embedding = nn.Linear(seq_length, d_model_time)
+        self.features2embedding = nn.Linear(features, d_model_feature)
 
-        self.attn_ln = nn.LayerNorm(dim)  # AttentionまえのLayerNorm
-        self.attn_feature = Attention(input_dim=dim, num_heads=num_heads, dropout=dropout_attention)
-        self.attn_time_series = Attention(input_dim=dim, num_heads=num_heads, dropout=dropout_attention)
-        self.ffn = FFN(dim, hidden_dim, dropout_ffn)
-        self.ffn_ln = nn.LayerNorm(dim)  # FFNまえのLayerNorm
+        self.attn_ln_time = nn.LayerNorm(d_model_time)  # AttentionまえのLayerNorm
+        self.attn_ln_feature = nn.LayerNorm(d_model_feature)
+        self.attn_feature = FeatureAttention(input_dim=d_model_time, num_heads=num_heads, dropout=dropout_attention)
+        self.attn_time_series = FeatureAttention(input_dim=d_model_feature, num_heads=num_heads, dropout=dropout_attention)
+        self.ffn_feature = FFN(d_model_feature, hidden_dim, dropout_ffn)
+        self.ffn_time = FFN(d_model_time, hidden_dim, dropout_ffn)
+        self.ffn_ln_feature = nn.LayerNorm(d_model_feature)  # FFNまえのLayerNorm
+        self.ffn_ln_time = nn.LayerNorm(d_model_time)
 
         self.cnn = CNN(
                 in_channels,         # 入力チャネル数
@@ -84,25 +87,25 @@ class TransformerTranspose(nn.Module):
         D: 特徴量数
         dim: 埋め込み次元
         """
-        x = self.legth2embedding(x.transpose(1, 2)) #[B:N:D] -> [B:D:N] -> [B:D:dim]
-        y, attn_feature = self.attn_feature(self.attn_ln(x))   #[B:D:dim] -> [B:D:dim]
+        x = self.legth2embedding(x.transpose(1, 2)) #[B:N:D] -> [B:D:N] -> [B:D:d_model_time]
+        # for _ in range(2):
+        y, attn_feature = self.attn_feature(self.attn_ln_time(x))   #[B:D:d_model_time] -> [B:D:d_model_time]
         x = y+x
+        x = self.ffn_time(self.ffn_ln_time(x)) + x
 
-        x = self.features2embedding(x.transpose(1, 2)) #[B:D:dim] -> [B:dim:D]->[B:dim:dim]
-        z, attn_time = self.attn_time_series(self.attn_ln(x))
-
-        if return_attn:  # attention mapを返す（attention mapの可視化に利用）
-            return attn_feature, attn_time
-        
+        x = self.features2embedding(x.transpose(1, 2)) #[B:D:dim] -> [B:d_model_time:D]->[B:d_model_time:d_model_feature]
+        # for _ in range(2):
+        z, attn_time = self.attn_time_series(self.attn_ln_feature(x))
         x = z+x
-        out = self.ffn(self.ffn_ln(x)) + x
-        out = out.unsqueeze(1) 
+        out = self.ffn_feature(self.ffn_ln_feature(x)) + x
+        out = out.unsqueeze(1)
 
         output = self.cnn(out)
         if return_attn:
             return output , attn_feature, attn_time, out
         else:
             return output
+
 
 
 

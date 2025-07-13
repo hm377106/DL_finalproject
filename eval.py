@@ -29,6 +29,7 @@ from torchvision import datasets, transforms
 from einops.layers.torch import Rearrange
 from einops import rearrange
 import time
+from model.TransformerTranspose import TransformerTranspose
 
 from Utilities.Utilities import read_csv, dataloader, create_sequences, split
 from config import config
@@ -55,20 +56,6 @@ train_loader, valid_loader = split(x_train_data, y_train_data, train_ratio=confi
 # valid_loader = dataloader(x_valid_data, y_valid_data, batch_size=config.batch_size) #y[64, 1]
 test_loader = dataloader(x_test_data, y_test_data, batch_size=config.batch_size)
 
-for loader in [train_loader, valid_loader, test_loader]:
-    first_batch_x, first_batch_y = next(iter(loader))
-
-    print("--- データローダーの動作確認 ---")
-    print(len(loader.dataset))
-    print(len(loader))
-    print(f"元のx_trainの形状: {x_train.shape}")
-    # print(f"元のx_validの形状: {x_valid.shape}")
-    print(f"元のx_testの形状: {x_test.shape}")
-    print(f"バッチサイズ: {config.batch_size}")
-    print(f"データローダーから取り出した最初のバッチの形状:")
-    print(f"  - x_batchの形状: {first_batch_x.shape}")
-    print(f"  - y_batchの形状: {first_batch_y.shape}")
-
 
 model = TransformerTranspose(
     d_model_feature=config.d_model_feature, d_model_time= config.d_model_time, num_heads=config.num_heads, hidden_dim=config.hidden_dim,
@@ -78,63 +65,107 @@ model = TransformerTranspose(
     kernel_sizes=config.cnn_kernel_sizes, strides=config.cnn_strides, paddings=config.cnn_paddings,
     pooling_methods=config.cnn_pooling, d_cmodel=config.d_model_time, d_tmodel=config.d_model_feature, global_pooling=config.cnn_global_pool,
     )
-model.to(device)
 
-criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=1e-5)
-scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=5)
+MODEL_PATH = os.path.join(path, 'output_model.pth')
 
-loss_list =[]
-valid_loss_list=[]
-start_time = time.time()
-model.train()
-early_stop=0
-early_stop_limit=config.early_stop
-best_valid_loss=100000000000000
-for epoch in range(config.num_epochs):
-    total_loss = 0.0
-    for x_batch, y_batch in train_loader:
-        y_batch=y_batch.unsqueeze(1)
+model.load_state_dict(torch.load(MODEL_PATH))
+
+model.eval()
+print('モデルの読み込み完了')
+
+
+model.eval()
+predictions = []
+actuals = []
+all_attns1 = []
+all_attns2 = []
+all_hid = []
+
+with torch.no_grad():
+    for x_batch, y_batch in test_loader:
         x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        optimizer.zero_grad()
-        outputs = model(x_batch)
-        outputs=outputs.unsqueeze(1)
-        loss = criterion(outputs, y_batch)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
+        outputs, attns1, attns2, hid = model(x_batch, return_attn=True)
+        predictions.extend(np.atleast_1d(outputs.cpu().numpy().squeeze()))
+        actuals.extend(np.atleast_1d(y_batch.cpu().numpy().squeeze()))
+        # predictions.extend(outputs.cpu().numpy().squeeze())
+        # actuals.extend(y_batch.cpu().numpy().squeeze())
+        for attn in attns1:
+            all_attns1.append(attn.cpu().numpy())
+        for attn in attns2:
+            all_attns2.append(attn.cpu().numpy())
+        all_hid.append(hid.cpu().numpy())
 
-    model.eval()
-    valid_loss=0.0
+all_attns1 = np.concatenate(all_attns1, axis=0)
+all_attns2 = np.concatenate(all_attns2, axis=0)
+all_hid = np.concatenate(all_hid, axis=0)
+# print(predictions)
+# print(actuals.shape)
+# MAEの計算
+mae = mean_absolute_error([a for a in actuals], [p for p in predictions])
+print(f"Mean Absolute Error (MAE) on test data: {mae:.4f}")
+#MSE
+mse = mean_squared_error([a for a in actuals], [p for p in predictions])
+print(f"Mean Absolute Error (MSE) on test data: {mse:.4f}")
 
-    with torch.no_grad():
-      for x_batch, y_batch in valid_loader:
-        y_batch=y_batch.unsqueeze(1)
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        predictions = model(x_batch)
-        loss = criterion(predictions, y_batch)
-        valid_loss+=loss.item()
+x_test = x_test.reset_index(drop=True)
+y_test = y_test.reset_index(drop=True)
 
-    if epoch % 2 == 0:
-        print(f'Current LR : {scheduler.get_last_lr()[0]:.6f}')
-        print(f'Epoch Train [{epoch+1}/{config.num_epochs}], Loss: {total_loss/len(train_loader):.4f}')
-        print(f'Epoch Valid [{epoch+1}/{config.num_epochs}], Loss: {valid_loss/len(valid_loader):.4f}')
+# nan_padding = [np.nan]*(config.seq_length)
+# predictions_withnan = nan_padding + [p for p in predictions]
+print(len(predictions))
+# y_valid["pred"] = predictions_withnan[:len(y_valid)]
+# diff = len(y_test) - len(predictions)
+# if diff > 0:
+#   predictions = [np.nan]*diff + predictions
+# else:
+#   predictions = predictions[:len(y_test)]
 
-    if valid_loss < best_valid_loss:
-      best_valid_loss = valid_loss
-      early_stop=0
-    else:
-      early_stop+=1
-    loss_list.append(total_loss/len(train_loader))
-    valid_loss_list.append(valid_loss/len(valid_loader))
+print(len(y_test))
+print(len(predictions))
+pred_csv = pd.DataFrame({
+    'Truth': [x for x in actuals],
+    'Pred' : predictions
+})
 
-    if early_stop >= early_stop_limit:
-      print(f'early stoppint at Epoch {epoch+1}')
-      break
-    scheduler.step(valid_loss)
+pred_csv.to_csv(config.train_output_file_path, index=False)
+os.makedirs(config.output_attnfeature_path, exist_ok=True)
+os.makedirs(config.output_attntime_path, exist_ok=True)
+os.makedirs(config.output_hid_path, exist_ok=True)
+np.save(config.output_attnfeature_path, all_attns1)
+np.save(config.output_attntime_path, all_attns2)
+np.save(config.output_hid_path, all_hid)
 
-end_time = time.time()
-print(f"train finish {end_time-start_time}s")
+print(f"Predictions saved to {config.train_output_file_path}")
 
-torch.save(model.state_dict(), config.output_model_path)
 
+
+pred_csv[['Truth', 'Pred']].plot(figsize=(12, 6))
+
+# グラフの装飾
+plt.title('truth vs pred')
+plt.xlabel('index')
+plt.ylabel('log')
+plt.grid(True)
+plt.legend()
+plt.show()
+
+
+
+def calculate_inverse_exp(value):
+  return np.exp(value) -1
+pred_csv['Truth'] = pred_csv['Truth'].apply(calculate_inverse_exp)
+pred_csv['Pred'] = pred_csv['Pred'].apply(calculate_inverse_exp)
+pred_csv[['Truth', 'Pred']].plot(figsize=(12, 6))
+
+# グラフの装飾
+plt.title('truth vs pred')
+plt.xlabel('index')
+plt.ylabel('Wh')
+plt.grid(True)
+plt.legend()
+plt.show()
+
+
+pred_csv['loss'] = pred_csv['Truth'] - pred_csv['Pred']
+mse = pred_csv['loss'].sum() / pred_csv['loss'].count()
+print(mse)
